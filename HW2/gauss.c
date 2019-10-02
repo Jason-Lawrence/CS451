@@ -14,8 +14,9 @@
 #include <sys/times.h>
 #include <sys/time.h>
 #include <time.h>
-#include "gaussPThread.c"
-#include "gaussOMP.c"
+#include <pthread.h>
+#include <omp.h>
+
 
 /* Program Parameters */
 #define MAXN 2000  /* Max value of N */
@@ -29,10 +30,13 @@ volatile float A[MAXN][MAXN], B[MAXN], X[MAXN];
 #define randm() 4|2[uid]&3
 
 /* Prototype */
-void gauss();  /* The function you will provide.
-		* It is this routine that is timed.
-		* It is called only on the parent.
-		*/
+void gauss();
+void *pTdElimination(void *args);
+void gaussPThread();
+void gaussOMP();	/* The function you will provide.
+			* It is this routine that is timed.
+			* It is called only on the parent.
+			*/
 
 /* returns a seed for srand based on the time */
 unsigned int time_seed() {
@@ -140,8 +144,8 @@ int main(int argc, char **argv) {
   etstart2 = times(&cputstart);
 
   /* Gaussian Elimination */
-  gauss();
-
+  //gauss();
+  gaussPThread();
   /* Stop Clock */
   gettimeofday(&etstop, &tzdummy);
   etstop2 = times(&cputstop);
@@ -204,6 +208,67 @@ void gauss() {
 
 
   /* Back substitution */
+  for (row = N - 1; row >= 0; row--) {
+    X[row] = B[row];
+    for (col = N-1; col > row; col--) {
+      X[row] -= A[row][col] * X[col];
+    }
+    X[row] /= A[row][row];
+  }
+}
+
+struct arge{
+  int norm;
+  int row;
+  int col;
+  float mult;
+};
+
+void *pTdElimination(void *args){
+  int norm, row, col;
+  float mult;
+  struct arge *arg = (struct arge *)args;
+
+  norm = arg->norm;
+  row  = arg->row;
+  col  = arg->col;
+  mult = arg->mult;
+  printf("In El norm: %d, row: %d, col: %d.\n", norm, row, col);
+
+  A[row][col] -= A[norm][col] * mult;
+
+}
+
+void gaussPThread(){
+  int norm, row, col;
+  int id;
+  float mult;
+  struct arge args;
+  
+  printf("Computing using PThreads.\n");
+  
+  /*Gaussian Elimination*/
+  for (norm = 0; norm < N - 1; norm++){
+    for (row = norm + 1; row < N; row++){
+      mult = A[row][norm] / A[norm][norm];
+      pthread_t threads[N-norm];
+      printf("# of threads to create %d.\n", N-norm);
+      col = norm;
+      for (id = 0; id < N-norm; id++){
+	args.norm = norm;
+	args.row = row;
+	args.col = col;
+	args.mult = mult;
+	printf("In gau norm: %d, row: %d, col: %d.\n", norm, row, col);
+        pthread_create(&threads[id], NULL, &pTdElimination, (void *)&args);
+        col++;
+      }
+      for (id=0; id< N-norm; id++){
+        pthread_join(threads[id], NULL);
+      }
+      B[row] -= B[norm] * mult;
+    }
+  }
   for (row = N - 1; row >= 0; row--) {
     X[row] = B[row];
     for (col = N-1; col > row; col--) {
