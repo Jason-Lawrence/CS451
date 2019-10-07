@@ -145,7 +145,8 @@ int main(int argc, char **argv) {
 
   /* Gaussian Elimination */
   //gauss();
-  gaussPThread();
+  //gaussPThread();
+  gaussOMP();
   /* Stop Clock */
   gettimeofday(&etstop, &tzdummy);
   etstop2 = times(&cputstop);
@@ -216,59 +217,101 @@ void gauss() {
     X[row] /= A[row][row];
   }
 }
-
+// This is used for pthreads.
 struct arge{
   int norm;
-  int row;
-  int col;
-  float mult;
+  int id;
 };
 
-void *pTdElimination(void *args){
-  int norm, row, col;
+void *pTdElimination(void *arg){
+  /*
+   * The row the thread works on is based of the thread id passed in.
+   * In this case, the thread work on every fourth row. This icreases the speed of 
+   * the algorithm significantly. 
+   */
+
+  int norm, row, col, tid;
   float mult;
-  struct arge *arg = (struct arge *)args;
+  struct arge *args = (struct arge *)arg;
 
-  norm = arg->norm;
-  row  = arg->row;
-  col  = arg->col;
-  mult = arg->mult;
-  printf("In El norm: %d, row: %d, col: %d.\n", norm, row, col);
+  norm = args->norm;
+  tid = args->id;
 
-  A[row][col] -= A[norm][col] * mult;
-
+  for(row=tid+norm+1; row<N; row=row+4){	  
+    mult = A[row][norm] / A[norm][norm];
+    for(col=norm; col<N; col++){
+      A[row][col] -= A[norm][col] * mult;
+    }
+    B[row] -= B[norm] * mult;
+  }  
 }
 
 void gaussPThread(){
+  /*
+   * This function uses 4 threads to split up the work of gaussian elimination. 
+   * the second for loop is parallized due to its lack of dependencies. 
+   * I use a struct to pass in the variables mainly needed by the thread.
+   * I wait for all of the threads to finish before starting the next iteration since 
+   * each thread is dependant on the value of norm. 
+   */
+
   int norm, row, col;
-  int id;
+  pthread_t t1, t2, t3, t4;//since my cpu has 4 cores
+  struct arge args1, args2, args3, args4;
+  
+  printf("Computing using Pthreads.\n");
+
+  for(norm=0; norm<N-1; norm++){
+    args1.norm = args2.norm = args3.norm = args4.norm = norm;
+    args1.id = 0;
+    args2.id = 1;
+    args3.id = 2;
+    args4.id = 3;
+
+    pthread_create(&t1, NULL, &pTdElimination, (void *)&args1);
+    pthread_create(&t2, NULL, &pTdElimination, (void *)&args2);
+    pthread_create(&t3, NULL, &pTdElimination, (void *)&args3);
+    pthread_create(&t4, NULL, &pTdElimination, (void *)&args4);
+
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+    pthread_join(t3, NULL);
+    pthread_join(t4, NULL);
+  }
+  
+  //Back Substitution.
+  for (row = N - 1; row >= 0; row--) {
+    X[row] = B[row];
+    for (col = N-1; col > row; col--) {
+      X[row] -= A[row][col] * X[col];
+    }
+    X[row] /= A[row][row];
+  }
+}
+
+
+void gaussOMP(){
+  /*
+   * This function parallelizes Gaussian elimination by using 4 threads to parallize the second
+   * for loop in the serial version. This can be done because there are no dependencies 
+   * between the columns in the rows. 
+   */
+
+  int norm, row, col;
   float mult;
-  struct arge args;
-  
-  printf("Computing using PThreads.\n");
-  
-  /*Gaussian Elimination*/
-  for (norm = 0; norm < N - 1; norm++){
-    for (row = norm + 1; row < N; row++){
+
+  for(norm=0; norm<N-1; norm++){
+    #pragma omp parallel for private(mult, row, col) num_threads(4) //I have 4 cores on my CPU
+    for(row=norm+1; row<N; row++){
       mult = A[row][norm] / A[norm][norm];
-      pthread_t threads[N-norm];
-      printf("# of threads to create %d.\n", N-norm);
-      col = norm;
-      for (id = 0; id < N-norm; id++){
-	args.norm = norm;
-	args.row = row;
-	args.col = col;
-	args.mult = mult;
-	printf("In gau norm: %d, row: %d, col: %d.\n", norm, row, col);
-        pthread_create(&threads[id], NULL, &pTdElimination, (void *)&args);
-        col++;
-      }
-      for (id=0; id< N-norm; id++){
-        pthread_join(threads[id], NULL);
+      for(col=norm; col<N; col++){
+        A[row][col] -= A[norm][col] * mult; 
       }
       B[row] -= B[norm] * mult;
     }
   }
+  
+  //Back Substitution.
   for (row = N - 1; row >= 0; row--) {
     X[row] = B[row];
     for (col = N-1; col > row; col--) {
