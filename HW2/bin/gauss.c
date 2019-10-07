@@ -144,9 +144,9 @@ int main(int argc, char **argv) {
   etstart2 = times(&cputstart);
 
   /* Gaussian Elimination */
-  //gauss();
+  gauss();
   //gaussPThread();
-  gaussOMP();
+  //gaussOMP();
   /* Stop Clock */
   gettimeofday(&etstop, &tzdummy);
   etstop2 = times(&cputstop);
