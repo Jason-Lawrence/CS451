@@ -1,5 +1,6 @@
 #include "mpi.h"
 #include <math.h>
+#include <stdio.h>
 
 int main(argc,argv)
 int argc;
@@ -14,7 +15,7 @@ char *argv[];
     MPI_Comm_rank(MPI_COMM_WORLD,&myid);
     while (!done)
     {
-	if (myid == 0) {
+	if (myid == 0) { 
 	    printf("Enter the number of intervals: (0 quits) ");
 	    scanf("%d",&n);
 	}
@@ -29,12 +30,14 @@ char *argv[];
 	}
 	mypi = h * sum;
 
-	MPI_Reduce(&mypi, &pi, 1, MPI_DOUBLE, MPI_SUM, 0,
+	MPI_Reduce(&mypi, &pi, 1, MPI_DOUBLE, MPI_SUM, numprocs-1,//Changed this from 0 to numprocs-1
 		   MPI_COMM_WORLD);
 
-	if (myid == 0)
+	if (myid == numprocs-1)//Changed this from 0 to numprocs-1
 	    printf("pi is approximately %.16f, Error is %.16f\n",
 		   pi, fabs(pi - PI25DT));
+	
+	MPI_Barrier(MPI_COMM_WORLD);//Added this to fix concurrency issue
     }
     MPI_Finalize();
     return 0;
