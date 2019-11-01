@@ -14,6 +14,9 @@
 #include <sys/times.h>
 #include <sys/time.h>
 #include <time.h>
+#include <string.h>
+
+#include "mpi.h"
 
 /* Program Parameters */
 #define MAXN 2000  /* Max value of N */
@@ -179,7 +182,183 @@ int main(int argc, char **argv) {
 /* Provided global variables are MAXN, N, A[][], B[], and X[],
  * defined in the beginning of this code.  X[] is initialized to zeros.
  */
+void gaussWRONG() {
+  int norm, row, col, numprocs, rank;  /* Normalization row, and zeroing
+			* element row and col */
+  float multiplier;
+
+
+  /* Gaussian elimination */
+  for (norm = 0; norm < N - 1; norm++) {
+
+    MPI_Init(NULL, NULL);
+    MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    //1. if rank != 0 then iterate over the appropriate section of matrix
+    if (rank != 0){
+      int rowsTouched = 0;
+      for (row = norm + rank - 1; row < N; row=row + numprocs - 1) {
+	rowsTouched++;
+      	multiplier = A[row][norm] / A[norm][norm];
+      	for (col = norm; col < N; col++) {
+	  A[row][col] -= A[norm][col] * multiplier;
+      	}
+      	B[row] -= B[norm] * multiplier;
+      }
+      // move A and B values to buffer
+      // send to rank 0
+      int dataSize = rowsTouched * (N - norm);
+      int rownum   = 0;
+      float * data = (float *)malloc(dataSize * sizeof(float));
+
+      for(row = norm + rank - 1; row < N; row=row + numprocs - 1){
+	int baseAddr = rownum * (N-norm);
+        for (col = norm; col < N; col++) data[baseAddr + (col - norm)] = A[row][col];
+	rownum++;
+      }
+      
+      printf("%d Sent %f\n", rank, *data);
+      MPI_Send(data, dataSize, MPI_FLOAT, 0, 0, MPI_COMM_WORLD);
+      //TODO: Do we free data?
+ 
+    }else {
+      // recieve A and B values
+      // move to appropriate location
+      for (int process = 1; process < numprocs; process++){
+	int rowsUsed = (N / (numprocs - 1)) + 1; // TODO: this leads to unused memory and could be an issue with copying
+	int dataSize = (N - norm) * rowsUsed;
+	float * data = (float *)malloc(dataSize * sizeof(float));
+        MPI_Recv(data, dataSize, MPI_FLOAT, process, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+	printf("Master Received %f\n", *data);
+
+	free(data);
+      }
+    }
+    //2. if rank == 0 then receive matrix info
+
+    MPI_Finalize();
+  }
+  /* (Diagonal elements are not normalized to 1.  This is treated in back
+   * substitution.)
+   */
+
+  //MPI_Finalize();
+
+  /* Back substitution */
+  for (row = N - 1; row >= 0; row--) {
+    X[row] = B[row];
+    for (col = N-1; col > row; col--) {
+      X[row] -= A[row][col] * X[col];
+    }
+    X[row] /= A[row][row];
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 void gauss() {
+  int norm, row, col, numprocs, rank, Asize;  /* Normalization row, and zeroing
+			* element row and col */
+  float multiplier;
+
+  Asize = N * N;
+
+  MPI_Init(NULL, NULL);
+  MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+  //float * data = (float *) malloc(sizeof(float) * N);
+
+  /* Gaussian elimination */
+  for (norm = 0; norm < N - 1; norm++) {
+
+    // WAIT TO RECEIVE UPDATED A and B VALUES
+    // Broadcast
+    MPI_Bcast(A, Asize, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&(B[norm]), 1, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+    if (rank != 0){
+      for (row = norm + rank; row < N; row=row + numprocs - 1) {
+      	multiplier = A[row][norm] / A[norm][norm];
+      	for (col = norm; col < N; col++) {
+	  	//printf("before - A[%d][%d] = %f\n", row, col, A[row][col]);
+	  A[row][col] -= A[norm][col] * multiplier; // TODO: optimize by putting results straight in buffer
+	  	//printf("after  - A[%d][%d] = %f\n", row, col, A[row][col]);
+	  
+      	}
+      	B[row] -= B[norm] * multiplier; // TODO: send this out
+
+	// SEND UPDATED ROW TO ROOT
+	//memcpy(data, A[row], N*sizeof(float)); // TODO: optimize by removing this line
+
+	MPI_Send(&A[row], N, MPI_FLOAT, 0, row, MPI_COMM_WORLD); // TODO: optimize by sending one message not multiple
+	MPI_Send(&B[row], 1, MPI_FLOAT, 0, (N+row), MPI_COMM_WORLD);
+      }
+
+    }else {
+      // RECEIVE A and B VALUES
+      // Parse and apply to correct rows
+      for(row = norm + 1; row < N; row++){
+        MPI_Recv(&A[row], N, MPI_FLOAT, MPI_ANY_SOURCE, row, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	//memcpy(A[row], data, N*sizeof(float)); // TODO: skip the buffer and load data right into A[row]
+	MPI_Recv(&B[row], 1, MPI_FLOAT, MPI_ANY_SOURCE, (N + row), MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      }
+    }
+    // SYNCRONIZE!
+    if (rank == 0) print_inputs();
+    MPI_Barrier(MPI_COMM_WORLD);
+
+  }
+  MPI_Finalize();
+
+  /* (Diagonal elements are not normalized to 1.  This is treated in back
+   * substitution.)
+   */
+
+  //MPI_Finalize();
+
+  /* Back substitution */
+  for (row = N - 1; row >= 0; row--) {
+    X[row] = B[row];
+    for (col = N-1; col > row; col--) {
+      X[row] -= A[row][col] * X[col];
+    }
+    X[row] /= A[row][row];
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void gaussOG() {
   int norm, row, col;  /* Normalization row, and zeroing
 			* element row and col */
   float multiplier;
@@ -195,6 +374,7 @@ void gauss() {
       }
       B[row] -= B[norm] * multiplier;
     }
+    print_inputs();
   }
   /* (Diagonal elements are not normalized to 1.  This is treated in back
    * substitution.)
