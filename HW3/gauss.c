@@ -15,13 +15,11 @@
 #include <sys/time.h>
 #include <time.h>
 #include <string.h>
-
 #include "mpi.h"
 
 /* Program Parameters */
-#define MAXN 2000  /* Max value of N */
+#define MAXN 3000  /* Max value of N */
 int N;  /* Matrix size */
-int rank, numprocs;
 
 /* Matrices and vectors */
 volatile float A[MAXN][MAXN], B[MAXN], X[MAXN];
@@ -31,7 +29,7 @@ volatile float A[MAXN][MAXN], B[MAXN], X[MAXN];
 #define randm() 4|2[uid]&3
 
 /* Prototype */
-void gauss();  /* The function you will provide.
+void gauss(int numprocs, int rank);  /* The function you will provide.
 		* It is this routine that is timed.
 		* It is called only on the parent.
 		*/
@@ -46,7 +44,7 @@ unsigned int time_seed() {
 }
 
 /* Set the program parameters from the command-line arguments */
-void parameters(int argc, char **argv) {
+void parameters(int argc, char **argv, int rank) {
   int seed = 0;  /* Random seed */
   char uid[32]; /*User name */
 
@@ -56,7 +54,7 @@ void parameters(int argc, char **argv) {
   if (argc == 3) {
     seed = atoi(argv[2]);
     srand(seed);
-    printf("Random seed = %i\n", seed);
+    if(rank == 0) printf("Random seed = %i\n", seed);
   } 
   if (argc >= 2) {
     N = atoi(argv[1]);
@@ -72,14 +70,14 @@ void parameters(int argc, char **argv) {
   }
 
   /* Print parameters */
-  printf("\nMatrix dimension N = %i.\n", N);
+  if(rank == 0) printf("\nMatrix dimension N = %i.\n", N);
 }
 
 /* Initialize A and B (and X to 0.0s) */
-void initialize_inputs() {
+void initialize_inputs(int rank) {
   int row, col;
 
-  printf("\nInitializing...\n");
+  if(rank == 0) printf("\nInitializing...\n");
   for (col = 0; col < N; col++) {
     for (row = 0; row < N; row++) {
       A[row][col] = (float)rand() / 32768.0;
@@ -120,16 +118,11 @@ void print_X() {
 }
 
 int main(int argc, char **argv) {
-
-
-
+  //Initialize MPI
+  int numprocs, rank;
   MPI_Init(&argc, &argv);
   MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-
-
-
   /* Timing variables */
   struct timeval etstart, etstop;  /* Elapsed times using gettimeofday() */
   struct timezone tzdummy;
@@ -138,53 +131,58 @@ int main(int argc, char **argv) {
   struct tms cputstart, cputstop;  /* CPU times for my processes */
 
   /* Process program parameters */
-  parameters(argc, argv);
 
+  parameters(argc, argv, rank);
+  
   /* Initialize A and B */
-  initialize_inputs();
+  initialize_inputs(rank);
 
   /* Print input matrices */
-  print_inputs();
+  if (rank == 0){
+    print_inputs();
 
-  /* Start Clock */
-  printf("\nStarting clock.\n");
-  gettimeofday(&etstart, &tzdummy);
-  etstart2 = times(&cputstart);
+    /* Start Clock */
+    printf("\nStarting clock.\n");
+    gettimeofday(&etstart, &tzdummy);
+    etstart2 = times(&cputstart);
 
   /* Gaussian Elimination */
-  gauss();
+  }
+  gauss(numprocs, rank); //
+  
+  if(rank == 0){
+    /* Stop Clock */
+    Back_Substitution();
+    gettimeofday(&etstop, &tzdummy);
+    etstop2 = times(&cputstop);
+    printf("Stopped clock.\n");
+    usecstart = (unsigned long long)etstart.tv_sec * 1000000 + etstart.tv_usec;
+    usecstop = (unsigned long long)etstop.tv_sec * 1000000 + etstop.tv_usec;
 
-  /* Stop Clock */
-  gettimeofday(&etstop, &tzdummy);
-  etstop2 = times(&cputstop);
-  printf("Stopped clock.\n");
-  usecstart = (unsigned long long)etstart.tv_sec * 1000000 + etstart.tv_usec;
-  usecstop = (unsigned long long)etstop.tv_sec * 1000000 + etstop.tv_usec;
-
-  /* Display output */
-  print_X();
-
-  /* Display timing results */
-  printf("\nElapsed time = %g ms.\n",
+    /* Display output */
+    print_X();
+    /* Display timing results */
+    
+    printf("\nElapsed time = %g ms.\n",
 	 (float)(usecstop - usecstart)/(float)1000);
 
-  printf("(CPU times are accurate to the nearest %g ms)\n",
+    printf("(CPU times are accurate to the nearest %g ms)\n",
 	 1.0/(float)CLOCKS_PER_SEC * 1000.0);
-  printf("My total CPU time for parent = %g ms.\n",
+    printf("My total CPU time for parent = %g ms.\n",
 	 (float)( (cputstop.tms_utime + cputstop.tms_stime) -
 		  (cputstart.tms_utime + cputstart.tms_stime) ) /
 	 (float)CLOCKS_PER_SEC * 1000);
-  printf("My system CPU time for parent = %g ms.\n",
+    printf("My system CPU time for parent = %g ms.\n",
 	 (float)(cputstop.tms_stime - cputstart.tms_stime) /
-	 (float)CLOCKS_PER_SEC * 1000);
-  printf("My total CPU time for child processes = %g ms.\n",
+               (float)CLOCKS_PER_SEC * 1000);
+    printf("My total CPU time for child processes = %g ms.\n",
 	 (float)( (cputstop.tms_cutime + cputstop.tms_cstime) -
-		  (cputstart.tms_cutime + cputstart.tms_cstime) ) /
+		 (cputstart.tms_cutime + cputstart.tms_cstime) ) /
 	 (float)CLOCKS_PER_SEC * 1000);
+    
       /* Contrary to the man pages, this appears not to include the parent */
-  printf("--------------------------------------------\n");
-  
-  exit(0);
+    printf("--------------------------------------------\n");
+  }
 }
 
 /* ------------------ Above Was Provided --------------------- */
@@ -193,73 +191,55 @@ int main(int argc, char **argv) {
 /* Provided global variables are MAXN, N, A[][], B[], and X[],
  * defined in the beginning of this code.  X[] is initialized to zeros.
  */
-
-
-
-
-
-
-
-
-
-
-
-void gauss() {
-  int norm, row, col, Asize;  /* Normalization row, and zeroing
-			* element row and col */
-  float multiplier;
-
-  Asize = N * N;
- 
-
+void gauss(int numprocs, int rank) {
+  int norm, row, col;  
+  float mult;
   /* Gaussian elimination */
   for (norm = 0; norm < N - 1; norm++) {
 
-    // WAIT TO RECEIVE UPDATED A and B VALUES
-    // Broadcast
-    //MPI_Bcast(A, Asize, MPI_FLOAT, 0, MPI_COMM_WORLD);
-  
-    // TODO: Instead of broadcast, send specific data to specific processes
-    int r;
-    for (r = 0; r < N; r++)
-      MPI_Bcast(&(A[norm + r]), N, MPI_FLOAT, 0, MPI_COMM_WORLD);
-
+    // Master Broadcasts the current iteration of the A matrix to the slaves as well as the B Vector.
+    int rowNum;
+    for (rowNum = 0; rowNum < N; rowNum++)
+      /* Broadcast row by row from A since the data is not stored contiguously in memory
+       * to each slave (this is slow and hurts performance.)
+       */
+      MPI_Bcast(&(A[norm + rowNum]), N, MPI_FLOAT, 0, MPI_COMM_WORLD); 
     MPI_Bcast(B, N, MPI_FLOAT, 0, MPI_COMM_WORLD);
-
+    //The Slaves then split up the work based on there rank.
+    //This is very similar to how pthread did it with thread id. 
     if (rank != 0){
       for (row = norm + rank; row < N; row=row + numprocs - 1) {
-      	multiplier = A[row][norm] / A[norm][norm];
+      	mult = A[row][norm] / A[norm][norm];
       	for (col = norm; col < N; col++) {
-	  A[row][col] -= A[norm][col] * multiplier;
+	  A[row][col] -= A[norm][col] * mult;
       	}
-      	B[row] -= B[norm] * multiplier;
-
-	MPI_Send(&(A[row][norm]), N-norm, MPI_FLOAT, 0, row, MPI_COMM_WORLD); // TODO: optimize by sending one message not multiple
+      	B[row] -= B[norm] * mult;
+	//Slaves Send back the updated rows to the master.
+	MPI_Send(&(A[row][norm]), N-norm, MPI_FLOAT, 0, row, MPI_COMM_WORLD); 
 	MPI_Send(&B[row], 1, MPI_FLOAT, 0, (N+row), MPI_COMM_WORLD);
       }
 
     }else {
-      // RECEIVE A and B VALUES
-      // Parse and apply to correct rows
+      //Master waits for the Slaves to send back the data and update the A and B Matrix.
       for(row = norm + 1; row < N; row++){
         MPI_Recv(&(A[row][norm]), N-norm, MPI_FLOAT, MPI_ANY_SOURCE, row, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 	MPI_Recv(&B[row], 1, MPI_FLOAT, MPI_ANY_SOURCE, (N + row), MPI_COMM_WORLD, MPI_STATUS_IGNORE);
       }
     }
-    // SYNCRONIZE!
-    if (rank == 0) print_inputs();
+    // Wait for the Master to catch up to the slaves before the start of the next iteration
     MPI_Barrier(MPI_COMM_WORLD);
-
   }
+  // Done with Parallel aspect end MPI 
   MPI_Finalize();
 
   /* (Diagonal elements are not normalized to 1.  This is treated in back
    * substitution.)
    */
-  if (rank != 0) exit(0);
-  //MPI_Finalize();
+}
 
+void Back_Substitution(){
   /* Back substitution */
+  int row, col;
   for (row = N - 1; row >= 0; row--) {
     X[row] = B[row];
     for (col = N-1; col > row; col--) {
