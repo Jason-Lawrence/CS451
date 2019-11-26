@@ -9,7 +9,7 @@
 #include <math.h>
 
 /* Program Parameters */
-#define N 6000  /* Matrix size */
+#define N 8  /* Matrix size */
 
 /* Matrices */
 volatile float A[N][N], B[N][N];
@@ -19,7 +19,7 @@ volatile float A[N][N], B[N][N];
 void initialize_inputs() {
     int row, col;
     
-    srand((unsigned)time(NULL));
+    srand(300);
     for (row = 0; row < N; row++) {
         for (col = 0; col < N; col++) {
             A[row][col] = (float)rand() / 32768.0;
@@ -29,6 +29,17 @@ void initialize_inputs() {
     
 }
 
+
+void print_results(){
+  int row, col;
+
+  printf("\nB = \n\t");
+  for(row = 0; row < N; row++){
+    for(col = 0; col < N; col++){
+    	printf("%5.2f%s", B[row][col], (col < N-1) ? ", " : ";\n\t");
+    }
+  }
+}
 
 /* Kernel function */
 
@@ -89,6 +100,7 @@ int main(int argc, char **argv) {
     /* Display timing results */
     printf("Runtime = %g ms.\n", (float)runtime/(float)1000);
     printf("\nStopped clock.");
+    print_results();
     printf("\n---------------------------------------------\n");
     
     exit(0);
